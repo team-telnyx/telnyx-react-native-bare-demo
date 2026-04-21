@@ -21,22 +21,12 @@
 #import <React/RCTLinkingManager.h>
 
 // Frameworks referenced by the generated TelnyxVoiceCommons-Swift.h must be
-// visible to Clang before the Swift header is consumed, otherwise forward-
-// declared Swift types that conform to CXProviderDelegate / PKPushRegistryDelegate
-// fail to resolve ("Cannot find protocol declaration for 'CXProviderDelegate'").
+// visible to Clang before the Swift header is consumed.
 #import <AVFoundation/AVFoundation.h>
 #import <CallKit/CallKit.h>
 #import <PushKit/PushKit.h>
 
-// TelnyxVoiceCommons is a non-modular Swift pod, so the auto-generated
-// interface header can't be imported via <TelnyxVoiceCommons/...>. Instead
-// we add the pod's "Swift Compatibility Header" directory to HEADER_SEARCH_PATHS
-// in the Xcode target's build settings:
-//
-//     "${PODS_CONFIGURATION_BUILD_DIR}/TelnyxVoiceCommons/Swift Compatibility Header"
-//
-// (escaped quotes are required so the path survives whitespace splitting)
-// Then this quoted import resolves to the per-target generated header.
+// See HEADER_SEARCH_PATHS in the Xcode target for why this is a quoted import.
 #import "TelnyxVoiceCommons-Swift.h"
 
 @implementation AppDelegate
@@ -48,20 +38,12 @@
 
   BOOL result = [super application:application didFinishLaunchingWithOptions:launchOptions];
 
-  // Initialize VoIP push registry via react-voice-commons-sdk.
-  // This delegates to RNVoipPushNotificationManager under the hood and
-  // triggers the PKPushRegistryDelegate callbacks below.
   [TelnyxVoipPushHandler initializeVoipRegistration];
 
   return result;
 }
 
 - (NSURL *)sourceURLForBridge:(RCTBridge *)bridge
-{
-  return [self bundleURL];
-}
-
-- (NSURL *)bundleURL
 {
 #if DEBUG
   return [[RCTBundleURLProvider sharedSettings] jsBundleURLForBundleRoot:@"index"];

@@ -5,15 +5,12 @@ require Pod::Executable.execute_command('node', ['-p',
     {paths: [process.argv[1]]},
   )', __dir__]).strip
 
-platform :ios, min_ios_version_supported
+platform :ios, '15.1'
 prepare_react_native_project!
 
-# Disable New Architecture / Bridgeless mode. The Telnyx Voice Commons SDK's
-# CallKitBridge does its CallKit setup via DispatchQueue.main.async from the
-# native module's init, which races with the lazy module instantiation that
-# bridgeless mode uses — leading to "CallKit not available" / NO_CALLKIT
-# errors when newCall() is invoked before the main-queue work drains.
-ENV['RCT_NEW_ARCH_ENABLED'] = '0'
+# Flipper disabled — we don't use it and keeping it pulls in a large pod
+# graph with known Swift/static-library issues.
+flipper_config = FlipperConfiguration.disabled
 
 linkage = ENV['USE_FRAMEWORKS']
 if linkage != nil
@@ -22,16 +19,26 @@ if linkage != nil
 end
 
 target 'TelnyxBareDemo' do
-  # Firebase's Swift pods (FirebaseCoreInternal) depend on GoogleUtilities,
-  # which ships without module maps. Generating a module map only for
-  # GoogleUtilities avoids the react_runtime module-redefinition collision
-  # that a global `use_modular_headers!` causes on RN 0.79.
+  # Firebase 10.x Swift pods (FirebaseCoreInternal) depend on Obj-C pods
+  # (FirebaseCore, GoogleUtilities) that ship without module maps. Generating
+  # module maps only for these specific pods avoids the react_runtime
+  # module-redefinition collision that a global `use_modular_headers!` causes.
+  pod 'FirebaseCore', :modular_headers => true
+  pod 'FirebaseCoreExtension', :modular_headers => true
+  pod 'FirebaseCoreInternal', :modular_headers => true
+  pod 'FirebaseInstallations', :modular_headers => true
   pod 'GoogleUtilities', :modular_headers => true
 
   config = use_native_modules!
 
+  # Flags change depending on the env values.
+  flags = get_default_flags()
+
   use_react_native!(
     :path => config[:reactNativePath],
+    :hermes_enabled => flags[:hermes_enabled],
+    :fabric_enabled => flags[:fabric_enabled],
+    :flipper_configuration => flipper_config,
     # An absolute path to your application root.
     :app_path => "#{Pod::Config.instance.installation_root}/.."
   )
@@ -42,12 +49,21 @@ target 'TelnyxBareDemo' do
   end
 
   post_install do |installer|
-    # https://github.com/facebook/react-native/blob/main/packages/react-native/scripts/react_native_pods.rb#L197-L202
     react_native_post_install(
       installer,
       config[:reactNativePath],
-      :mac_catalyst_enabled => false,
-      # :ccache_enabled => true
+      :mac_catalyst_enabled => false
     )
+    __apply_Xcode_12_5_M1_post_install_workaround(installer)
+
+    # RN 0.72's `min_ios_version_supported` is 12.4, so some pod podspecs
+    # inherit < iOS 13 targets. Pods like react-native-websocket-self-signed
+    # use iOS 13+ APIs (URLSessionWebSocketTask) and fail to compile. Force
+    # every pod's deployment target up to our app target.
+    installer.pods_project.targets.each do |target|
+      target.build_configurations.each do |config|
+        config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.1'
+      end
+    end
   end
 end
