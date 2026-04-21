@@ -12,7 +12,10 @@
 
 import React, {useEffect, useState} from 'react';
 import {
+  DeviceEventEmitter,
   NativeModules,
+  PermissionsAndroid,
+  Platform,
   SafeAreaView,
   StatusBar,
   StyleSheet,
@@ -22,6 +25,7 @@ import {
   View,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import messaging from '@react-native-firebase/messaging';
 
 import {
   createTelnyxVoipClient,
@@ -50,6 +54,44 @@ function App(): React.JSX.Element {
       callSub.unsubscribe();
     };
   }, []);
+
+  // Notification-button actions reach JS via the TelnyxCallAction event
+  // (emitted by the native SDK from TelnyxMainActivity). The SDK's own
+  // pending-action handler only matches "hangup" — "reject" is ignored —
+  // so we hang up the matching call ourselves for both cases.
+  useEffect(() => {
+    const sub = DeviceEventEmitter.addListener(
+      'TelnyxCallAction',
+      ({action, callId}: {action?: string; callId?: string}) => {
+        if (action !== 'reject' && action !== 'hangup') return;
+        const call = voipClient.currentActiveCall;
+        if (call && call.callId === callId) {
+          call.hangup().catch(() => {});
+        }
+      },
+    );
+    return () => sub.remove();
+  }, []);
+
+  // Cold-start case: the reject may have been persisted before JS was up.
+  // When a call appears, sweep any pending reject/hangup for it and hang up.
+  useEffect(() => {
+    if (!activeCall || Platform.OS !== 'android') return;
+    const bridge = NativeModules.VoicePnBridge;
+    if (!bridge) return;
+    (async () => {
+      try {
+        const pending = await bridge.getPendingCallAction();
+        if (
+          (pending?.action === 'reject' || pending?.action === 'hangup') &&
+          pending?.callId === activeCall.callId
+        ) {
+          await activeCall.hangup();
+          await bridge.clearPendingCallAction();
+        }
+      } catch {}
+    })();
+  }, [activeCall]);
 
   return (
     // <TelnyxVoiceApp> handles the heavy lifting: auto-wires
@@ -104,14 +146,21 @@ function LoginView({
 
   const handleLogin = async () => {
     try {
-      // Fetch the VoIP push token captured by AppDelegate.mm
-      // (TelnyxVoipPushHandler stored it in UserDefaults under `voip_push_token`).
-      // Without this the Telnyx backend can't target the device for VoIP pushes.
       let pushToken: string | undefined;
       try {
-        pushToken = await NativeModules.VoicePnBridge?.getVoipToken();
+        if (Platform.OS === 'ios') {
+          pushToken = await NativeModules.VoicePnBridge?.getVoipToken();
+        } else {
+          if (Platform.Version >= 33) {
+            await PermissionsAndroid.request(
+              PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS,
+            );
+          }
+          await messaging().registerDeviceForRemoteMessages();
+          pushToken = await messaging().getToken();
+        }
       } catch (e) {
-        console.warn('Could not fetch VoIP push token:', e);
+        console.warn('Could not fetch push token:', e);
       }
 
       const config = createCredentialConfig(sipUser, sipPassword, {
@@ -221,33 +270,63 @@ function ActiveCallView({call}: {call: Call}): React.JSX.Element {
     };
   }, [call]);
 
+  const isIncomingRinging =
+    call.isIncoming && callState === TelnyxCallState.RINGING;
+
   return (
     <View style={styles.pane}>
-      <Text style={styles.callDestination}>{call.destination}</Text>
-      <Text style={styles.callState}>{callState}</Text>
+      <Text style={styles.callDestination}>
+        {call.callerName || call.callerNumber || call.destination}
+      </Text>
+      <Text style={styles.callState}>
+        {isIncomingRinging ? 'Incoming call' : callState}
+      </Text>
 
-      <View style={styles.row}>
-        <TouchableOpacity
-          style={[styles.controlButton, isMuted && styles.controlButtonActive]}
-          onPress={() => call.toggleMute()}>
-          <Text style={styles.controlButtonText}>
-            {isMuted ? 'Unmute' : 'Mute'}
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.controlButton, isHeld && styles.controlButtonActive]}
-          onPress={() => (isHeld ? call.resume() : call.hold())}>
-          <Text style={styles.controlButtonText}>
-            {isHeld ? 'Resume' : 'Hold'}
-          </Text>
-        </TouchableOpacity>
-      </View>
+      {isIncomingRinging ? (
+        <View style={styles.row}>
+          <TouchableOpacity
+            style={[styles.button, styles.hangupButton, styles.halfButton]}
+            onPress={() => call.hangup()}>
+            <Text style={styles.buttonText}>Reject</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.button, styles.answerButton, styles.halfButton]}
+            onPress={() => call.answer()}>
+            <Text style={styles.buttonText}>Answer</Text>
+          </TouchableOpacity>
+        </View>
+      ) : (
+        <>
+          <View style={styles.row}>
+            <TouchableOpacity
+              style={[
+                styles.controlButton,
+                isMuted && styles.controlButtonActive,
+              ]}
+              onPress={() => call.toggleMute()}>
+              <Text style={styles.controlButtonText}>
+                {isMuted ? 'Unmute' : 'Mute'}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.controlButton,
+                isHeld && styles.controlButtonActive,
+              ]}
+              onPress={() => (isHeld ? call.resume() : call.hold())}>
+              <Text style={styles.controlButtonText}>
+                {isHeld ? 'Resume' : 'Hold'}
+              </Text>
+            </TouchableOpacity>
+          </View>
 
-      <TouchableOpacity
-        style={[styles.button, styles.hangupButton]}
-        onPress={() => call.hangup()}>
-        <Text style={styles.buttonText}>Hang up</Text>
-      </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.button, styles.hangupButton]}
+            onPress={() => call.hangup()}>
+            <Text style={styles.buttonText}>Hang up</Text>
+          </TouchableOpacity>
+        </>
+      )}
     </View>
   );
 }
@@ -285,6 +364,8 @@ const styles = StyleSheet.create({
   secondaryButton: {backgroundColor: '#f0f0f0'},
   secondaryButtonText: {color: '#333'},
   hangupButton: {backgroundColor: '#ff3b30'},
+  answerButton: {backgroundColor: '#34c759'},
+  halfButton: {flex: 1},
   callDestination: {fontSize: 28, fontWeight: '700', textAlign: 'center'},
   callState: {fontSize: 16, color: '#666', textAlign: 'center', marginBottom: 24},
   row: {flexDirection: 'row', gap: 12, justifyContent: 'center'},

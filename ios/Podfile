@@ -22,6 +22,12 @@ if linkage != nil
 end
 
 target 'TelnyxBareDemo' do
+  # Firebase's Swift pods (FirebaseCoreInternal) depend on GoogleUtilities,
+  # which ships without module maps. Generating a module map only for
+  # GoogleUtilities avoids the react_runtime module-redefinition collision
+  # that a global `use_modular_headers!` causes on RN 0.79.
+  pod 'GoogleUtilities', :modular_headers => true
+
   config = use_native_modules!
 
   use_react_native!(
