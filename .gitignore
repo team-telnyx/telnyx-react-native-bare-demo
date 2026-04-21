@@ -34,6 +34,10 @@ local.properties
 *.keystore
 !debug.keystore
 
+# Firebase (do not commit — contains project-specific config)
+android/app/google-services.json
+ios/GoogleService-Info.plist
+
 # node.js
 #
 node_modules/

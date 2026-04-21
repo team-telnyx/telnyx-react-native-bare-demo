@@ -1,0 +1,5 @@
+package com.telnyxbaredemo
+
+import com.telnyx.react_voice_commons.TelnyxNotificationActionReceiver
+
+class AppNotificationActionReceiver : TelnyxNotificationActionReceiver()
