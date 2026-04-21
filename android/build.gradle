@@ -3,13 +3,13 @@
 buildscript {
     ext {
         buildToolsVersion = "33.0.0"
-        minSdkVersion = 21
+        minSdkVersion = 24
         compileSdkVersion = 33
         targetSdkVersion = 33
 
         // We use NDK 23 which has both M1 support and is the side-by-side NDK version from AGP.
         ndkVersion = "23.1.7779620"
-        kotlinVersion = "1.8.0"
+        kotlinVersion = "1.8.22"
     }
     repositories {
         google()
@@ -20,5 +20,20 @@ buildscript {
         classpath("com.facebook.react:react-native-gradle-plugin")
         classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlinVersion")
         classpath("com.google.gms:google-services:4.4.2")
+    }
+}
+
+// commons-sdk 0.4.0 was compiled against Kotlin 1.9 and uses the `..<`
+// rangeUntil operator, which needs an explicit opt-in on Kotlin 1.8.
+// We stay on Kotlin 1.8 (to match 0.72's Java 11 Javac default and avoid
+// the JVM-target mismatch Kotlin 1.9 introduces) and opt in globally.
+subprojects {
+    afterEvaluate {
+        tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
+            kotlinOptions {
+                freeCompilerArgs += ['-opt-in=kotlin.ExperimentalStdlibApi',
+                                     '-opt-in=kotlin.RequiresOptIn']
+            }
+        }
     }
 }
